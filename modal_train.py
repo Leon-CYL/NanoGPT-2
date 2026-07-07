@@ -1,48 +1,59 @@
 import subprocess
 import modal
 
-app = modal.App("gpt2-ddp-8xa100")
+app = modal.App("gpt2-fineweb-ddp")
 
 REMOTE_DIR = "/root/project"
+NUM_GPUS = 8
+
+fineweb_volume = modal.Volume.from_name("fineweb-data", create_if_missing=True)
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
         "torch",
+        "numpy",
         "tiktoken",
         "transformers",
-        "numpy",
+        "tqdm",
     )
+    # Change this to "gpt2.py" locally if your file is named gpt2.py
     .add_local_file("gpt2.py", f"{REMOTE_DIR}/gpt2.py")
-    .add_local_file("input.txt", f"{REMOTE_DIR}/input.txt")
 )
 
 @app.function(
     image=image,
-    gpu="A100-40GB:8",
-    cpu=2,
-    memory=4096,
-    timeout=60 * 60 * 6,
+    gpu=f"A100-40GB:{NUM_GPUS}",
+    cpu=16,
+    memory=32768,
+    volumes={f"{REMOTE_DIR}/edu_fineweb10B": fineweb_volume},
+    timeout=60 * 60 * 24,
 )
 def train():
     import os
+    import sys
 
     os.chdir(REMOTE_DIR)
 
     print("Checking files:")
-    subprocess.run(["ls", "-lh"], check=True)
+    subprocess.run(["ls", "-lh", REMOTE_DIR], check=True)
+
+    print("Checking FineWeb shards:")
+    subprocess.run(["ls", "-lh", f"{REMOTE_DIR}/edu_fineweb10B"], check=True)
 
     print("Checking GPUs:")
     subprocess.run(["nvidia-smi"], check=True)
 
-    print("Starting DDP training on 8 GPUs...")
+    print(f"Starting DDP training on {NUM_GPUS} GPUs...")
     subprocess.run(
         [
             "torchrun",
             "--standalone",
-            "--nproc_per_node=8",
+            f"--nproc_per_node={NUM_GPUS}",
             "gpt2.py",
         ],
+        stdout=sys.stdout,
+        stderr=sys.stderr,
         check=True,
     )
 
